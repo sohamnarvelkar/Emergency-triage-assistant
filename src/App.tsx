@@ -177,11 +177,15 @@ const ClinicalMetric = ({ label, value, unit, trend, icon: Icon, color }: any) =
 );
 
 const TriageTrends = ({ history }: { history: any[] }) => {
-  const data = history.slice(0, 10).reverse().map((h, i) => ({
-    name: h.time,
-    level: 6 - h.triage_level, // Invert for chart height
-    confidence: h.confidence * 100
-  }));
+  const data = history.slice(0, 10).reverse().map((h) => {
+    const level = typeof h.triage_level === 'number' ? (6 - h.triage_level) : 0;
+    const confidence = typeof h.confidence === 'number' ? (h.confidence * 100) : 0;
+    return {
+      name: h.time || '--:--',
+      level: isNaN(level) ? 0 : level,
+      confidence: isNaN(confidence) ? 0 : confidence
+    };
+  });
 
   return (
     <div className="h-[240px] w-full mt-4">
@@ -460,7 +464,12 @@ export default function App() {
               />
               <ClinicalMetric 
                 label="Avg Confidence" 
-                value={history.length > 0 ? Math.round(history.reduce((acc, h) => acc + h.confidence, 0) / history.length * 100) : '00'} 
+                value={(() => {
+                  if (history.length === 0) return '00';
+                  const sum = history.reduce((acc, h) => acc + (typeof h.confidence === 'number' ? h.confidence : 0), 0);
+                  const avg = Math.round((sum / history.length) * 100);
+                  return isNaN(avg) ? '00' : avg.toString().padStart(2, '0');
+                })()} 
                 unit="Percent" 
                 icon={Activity} 
                 color="bg-emerald-600" 
@@ -688,7 +697,7 @@ export default function App() {
                   >
                     <div className="absolute top-0 right-0 p-6">
                       <div className="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg text-[10px] font-bold">
-                        {Math.round(prediction.confidence * 100)}% CONFIDENCE
+                        {Math.round((prediction.confidence || 0) * 100)}% CONFIDENCE
                       </div>
                     </div>
 
