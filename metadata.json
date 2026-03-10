@@ -1,0 +1,5 @@
+{
+  "name": "Emergency Triage AI Assistant",
+  "description": "A production-grade AI system for emergency department triage, predicting patient priority levels using clinical data and providing explainable AI insights.",
+  "requestFramePermissions": []
+}
