@@ -4,6 +4,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import { Auth } from './components/Auth';
 import { 
   Activity, 
   AlertCircle, 
@@ -26,9 +28,12 @@ import {
   ArrowDown,
   Bell,
   X,
-  AlertTriangle
+  AlertTriangle,
+  Download
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { jsPDF } from 'jspdf';
+import autoTable from 'jspdf-autotable';
 import { 
   AreaChart, 
   Area, 
@@ -41,6 +46,8 @@ import {
   Bar,
   Cell
 } from 'recharts';
+
+import { analyzeTriage, PatientData as GeminiPatientData, PredictionResult as GeminiPredictionResult } from './services/geminiService';
 
 // --- Types ---
 
@@ -55,6 +62,8 @@ interface PatientData {
   chronic_disease_count: number;
   previous_er_visits: number;
   arrival_mode: 'ambulance' | 'walk-in' | 'public_transport' | 'other';
+  symptoms: string;
+  medical_history: string;
 }
 
 interface PredictionResult {
@@ -64,66 +73,9 @@ interface PredictionResult {
   explanation: {
     top_features: string[];
     summary: string;
+    clinical_summary: string;
   };
 }
-
-// --- Mock Triage Logic (Ported from Python for UI functionality) ---
-
-const calculateTriage = (data: PatientData): PredictionResult => {
-  let score = 0;
-  const risk_factors: string[] = [];
-  
-  if (data.oxygen_saturation < 90) {
-    score += 4;
-    risk_factors.push("Critical Hypoxia");
-  } else if (data.oxygen_saturation < 94) {
-    score += 1;
-    risk_factors.push("Mild Hypoxia");
-  }
-
-  if (data.heart_rate > 130 || data.heart_rate < 50) {
-    score += 3;
-    risk_factors.push("Tachycardia/Bradycardia");
-  }
-
-  if (data.systolic_blood_pressure < 90 || data.systolic_blood_pressure > 180) {
-    score += 3;
-    risk_factors.push("Abnormal Blood Pressure");
-  }
-
-  if (data.respiratory_rate > 30) {
-    score += 3;
-    risk_factors.push("Tachypnea");
-  }
-
-  if (data.body_temperature > 39.5) {
-    score += 2;
-    risk_factors.push("High Fever");
-  }
-
-  if (data.pain_level > 8) {
-    score += 2;
-    risk_factors.push("Severe Pain");
-  }
-
-  let level = 5;
-  if (score >= 6) level = 1;
-  else if (score >= 4) level = 2;
-  else if (score >= 2) level = 3;
-  else if (score >= 1) level = 4;
-
-  const confidence = 0.85 + (Math.random() * 0.1);
-
-  return {
-    triage_level: level,
-    confidence: parseFloat(confidence.toFixed(2)),
-    risk_factors,
-    explanation: {
-      top_features: risk_factors.slice(0, 2),
-      summary: `Prediction driven by ${risk_factors[0] || 'stable vitals'} and ${risk_factors[1] || 'patient history'}.`
-    }
-  };
-};
 
 // --- Components ---
 
@@ -248,12 +200,15 @@ const MOCK_HISTORY = [
     chronic_disease_count: 2,
     previous_er_visits: 1,
     arrival_mode: 'ambulance' as const,
+    symptoms: 'Severe chest pain, radiating to left arm, sweating.',
+    medical_history: 'Hypertension, smoker (1 pack/day).',
     triage_level: 2,
     confidence: 0.92,
     risk_factors: ["Mild Hypoxia", "Tachycardia", "Hypertension"],
     explanation: {
       top_features: ["oxygen_saturation", "heart_rate"],
-      summary: "Patient presents with respiratory distress and elevated heart rate."
+      summary: "Patient presents with respiratory distress and elevated heart rate.",
+      clinical_summary: "68-year-old patient presenting with symptoms highly suggestive of acute coronary syndrome. Elevated vitals and mild hypoxia indicate a need for immediate cardiac monitoring and intervention."
     }
   },
   {
@@ -270,12 +225,15 @@ const MOCK_HISTORY = [
     chronic_disease_count: 0,
     previous_er_visits: 0,
     arrival_mode: 'walk-in' as const,
+    symptoms: 'Mild cough and sore throat for 2 days.',
+    medical_history: 'No significant medical history.',
     triage_level: 5,
     confidence: 0.98,
     risk_factors: [],
     explanation: {
       top_features: ["vitals_stable"],
-      summary: "All vital signs are within normal limits."
+      summary: "All vital signs are within normal limits.",
+      clinical_summary: "24-year-old patient with mild upper respiratory symptoms. Vitals are stable and within normal limits. Patient is safe for non-urgent follow-up."
     }
   },
   {
@@ -292,12 +250,15 @@ const MOCK_HISTORY = [
     chronic_disease_count: 1,
     previous_er_visits: 3,
     arrival_mode: 'ambulance' as const,
+    symptoms: 'Difficulty breathing, bluish lips, high respiratory rate.',
+    medical_history: 'Asthma, COPD, previous hospitalization for respiratory failure.',
     triage_level: 1,
     confidence: 0.95,
     risk_factors: ["Critical Hypoxia", "Tachycardia", "Hypotension", "Tachypnea"],
     explanation: {
       top_features: ["oxygen_saturation", "respiratory_rate"],
-      summary: "Critical respiratory and hemodynamic instability detected."
+      summary: "Critical respiratory and hemodynamic instability detected.",
+      clinical_summary: "52-year-old patient in critical condition with severe respiratory failure and signs of shock. Immediate resuscitation and advanced airway management are required."
     }
   },
   {
@@ -314,12 +275,15 @@ const MOCK_HISTORY = [
     chronic_disease_count: 0,
     previous_er_visits: 0,
     arrival_mode: 'walk-in' as const,
+    symptoms: 'High fever, chills, and body aches.',
+    medical_history: 'Type 2 Diabetes.',
     triage_level: 3,
     confidence: 0.89,
     risk_factors: ["Fever"],
     explanation: {
       top_features: ["body_temperature"],
-      summary: "Patient has significant fever but stable respiratory status."
+      summary: "Patient has significant fever but stable respiratory status.",
+      clinical_summary: "35-year-old patient with high fever and systemic symptoms. While vitals are currently stable, the severity of the fever and history of diabetes warrant urgent evaluation for infection."
     }
   },
   {
@@ -336,12 +300,15 @@ const MOCK_HISTORY = [
     chronic_disease_count: 3,
     previous_er_visits: 2,
     arrival_mode: 'public_transport' as const,
+    symptoms: 'Persistent headache and mild dizziness.',
+    medical_history: 'Chronic migraines.',
     triage_level: 3,
     confidence: 0.91,
     risk_factors: ["Hypertension", "Elderly"],
     explanation: {
       top_features: ["age", "systolic_blood_pressure"],
-      summary: "Stable vitals but high risk due to age and comorbidities."
+      summary: "Stable vitals but high risk due to age and comorbidities.",
+      clinical_summary: "72-year-old patient with multiple comorbidities presenting with neurological symptoms. Age and history of hypertension increase the risk for serious underlying conditions, requiring urgent assessment."
     }
   },
   {
@@ -358,17 +325,21 @@ const MOCK_HISTORY = [
     chronic_disease_count: 0,
     previous_er_visits: 0,
     arrival_mode: 'walk-in' as const,
+    symptoms: 'Severe abdominal pain, nausea.',
+    medical_history: 'History of gallstones.',
     triage_level: 4,
     confidence: 0.87,
     risk_factors: ["Severe Pain"],
     explanation: {
       top_features: ["pain_level"],
-      summary: "Significant pain reported, but physiological vitals are stable."
+      summary: "Significant pain reported, but physiological vitals are stable.",
+      clinical_summary: "19-year-old patient with acute abdominal pain. Although vitals are stable, the intensity of the pain and symptoms of nausea require evaluation to rule out acute surgical conditions."
     }
   }
 ];
 
-export default function App() {
+function AppContent() {
+  const { user, loading, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'intake' | 'history'>('dashboard');
   const [formData, setFormData] = useState<PatientData>({
     age: 45,
@@ -380,12 +351,27 @@ export default function App() {
     pain_level: 2,
     chronic_disease_count: 0,
     previous_er_visits: 0,
-    arrival_mode: 'walk-in'
+    arrival_mode: 'walk-in',
+    symptoms: '',
+    medical_history: ''
   });
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [activeAlerts, setActiveAlerts] = useState<{ id: string, patientId: string, level: number, time: string }[]>([]);
-  const [history, setHistory] = useState<(PatientData & PredictionResult & { id: string, time: string, timestamp: number })[]>(MOCK_HISTORY);
+  const [history, setHistory] = useState<(PatientData & PredictionResult & { id: string, time: string, timestamp: number })[]>([]);
+  
+  useEffect(() => {
+    if (user) {
+      fetch('/api/triage')
+        .then(res => res.json())
+        .then(data => {
+          if (Array.isArray(data)) {
+            setHistory(data.length > 0 ? data : MOCK_HISTORY);
+          }
+        })
+        .catch(err => console.error('Failed to fetch history:', err));
+    }
+  }, [user]);
   
   // History Filter/Sort State
   const [searchQuery, setSearchQuery] = useState('');
@@ -393,15 +379,105 @@ export default function App() {
   const [sortConfig, setSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' | null }>({ key: 'timestamp', direction: 'desc' });
   const [selectedRecord, setSelectedRecord] = useState<(PatientData & PredictionResult & { id: string, time: string, timestamp: number }) | null>(null);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+  const downloadPDF = (record: PatientData & PredictionResult & { id: string, time: string }) => {
+    const doc = new jsPDF();
+    
+    // Header
+    doc.setFontSize(22);
+    doc.setTextColor(14, 165, 233); // clinical-accent
+    doc.text('TriageAI Clinical Report', 14, 20);
+    
+    doc.setFontSize(10);
+    doc.setTextColor(100, 116, 139); // gray-500
+    doc.text(`Report ID: ${record.id}`, 14, 28);
+    doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 33);
+    
+    // Patient Info
+    doc.setFontSize(14);
+    doc.setTextColor(15, 23, 42); // clinical-ink
+    doc.text('Patient Information', 14, 45);
+    
+    autoTable(doc, {
+      startY: 50,
+      head: [['Field', 'Value']],
+      body: [
+        ['Age', `${record.age} Years`],
+        ['Arrival Mode', record.arrival_mode.replace('_', ' ')],
+        ['Symptoms', record.symptoms],
+        ['Medical History', record.medical_history || 'N/A'],
+      ],
+      theme: 'striped',
+      headStyles: { fillColor: [14, 165, 233] },
+    });
+    
+    // Vitals
+    doc.setFontSize(14);
+    doc.text('Vital Signs', 14, (doc as any).lastAutoTable.finalY + 15);
+    
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [['Vital', 'Value']],
+      body: [
+        ['Heart Rate', `${record.heart_rate} BPM`],
+        ['Blood Pressure', `${record.systolic_blood_pressure} mmHg`],
+        ['Oxygen Saturation', `${record.oxygen_saturation}%`],
+        ['Respiratory Rate', `${record.respiratory_rate}/min`],
+        ['Temperature', `${record.body_temperature}°C`],
+        ['Pain Level', `${record.pain_level}/10`],
+      ],
+      theme: 'grid',
+      headStyles: { fillColor: [14, 165, 233] },
+    });
+    
+    // Triage Result
+    doc.setFontSize(14);
+    doc.text('Triage Assessment', 14, (doc as any).lastAutoTable.finalY + 15);
+    
+    const triageLevelText = 
+      record.triage_level === 1 ? 'Level 1: Resuscitation' :
+      record.triage_level === 2 ? 'Level 2: Emergent' :
+      record.triage_level === 3 ? 'Level 3: Urgent' :
+      record.triage_level === 4 ? 'Level 4: Less Urgent' :
+      'Level 5: Non-Urgent';
+
+    autoTable(doc, {
+      startY: (doc as any).lastAutoTable.finalY + 20,
+      head: [['Metric', 'Result']],
+      body: [
+        ['Triage Level', triageLevelText],
+        ['Confidence Score', `${Math.round(record.confidence * 100)}%`],
+        ['Risk Factors', record.risk_factors.join(', ') || 'None'],
+      ],
+      theme: 'plain',
+      headStyles: { fillColor: [14, 165, 233], textColor: [255, 255, 255] },
+    });
+
+    // Clinical Summary
+    doc.setFontSize(14);
+    doc.text('Clinical Summary', 14, (doc as any).lastAutoTable.finalY + 15);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'italic');
+    const splitSummary = doc.splitTextToSize(record.explanation.clinical_summary, 180);
+    doc.text(splitSummary, 14, (doc as any).lastAutoTable.finalY + 22);
+    
+    // Footer
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(150, 150, 150);
+    doc.text('This report is generated by TriageAI and should be reviewed by a qualified medical professional.', 14, 285);
+    
+    doc.save(`Triage_Report_${record.id}.pdf`);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({
       ...prev,
-      [name]: name === 'arrival_mode' ? value : (value === '' ? NaN : parseFloat(value))
+      [name]: (name === 'arrival_mode' || name === 'symptoms' || name === 'medical_history') ? value : (value === '' ? NaN : parseFloat(value))
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsAnalyzing(true);
     
@@ -417,11 +493,9 @@ export default function App() {
       }
     });
 
-    // Simulate API delay
-    setTimeout(() => {
-      const result = calculateTriage(sanitizedData);
+    try {
+      const result = await analyzeTriage(sanitizedData as GeminiPatientData);
       setPrediction(result);
-      setIsAnalyzing(false);
       
       const historyItem = {
         ...sanitizedData,
@@ -430,13 +504,25 @@ export default function App() {
         time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         timestamp: Date.now()
       };
+      
+      // Save to database
+      fetch('/api/triage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(historyItem)
+      }).catch(err => console.error('Failed to save triage:', err));
+
       setHistory(prev => [historyItem, ...prev]);
       
       // Auto-trigger alert for Level 1 (Resuscitation)
       if (result.triage_level === 1) {
         triggerAlert(historyItem.id, 1);
       }
-    }, 1500);
+    } catch (error) {
+      console.error("Triage Analysis Error:", error);
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const triggerAlert = (patientId: string, level: number) => {
@@ -452,6 +538,21 @@ export default function App() {
   const clearAlert = (id: string) => {
     setActiveAlerts(prev => prev.filter(a => a.id !== id));
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-slate-500 font-medium animate-pulse">Initializing System...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Auth />;
+  }
 
   return (
     <div className="min-h-screen bg-[#F8F9FA] text-[#1A1C1E] font-sans selection:bg-blue-100">
@@ -505,7 +606,7 @@ export default function App() {
           {[
             { id: 'dashboard', label: 'Overview', icon: LayoutDashboard },
             { id: 'intake', label: 'New Assessment', icon: Plus },
-            { id: 'history', label: 'Clinical Logs', icon: History },
+            { id: 'history', label: 'Triage History', icon: History },
           ].map((item) => (
             <button 
               key={item.id}
@@ -522,6 +623,24 @@ export default function App() {
         </div>
 
         <div className="mt-auto space-y-6">
+          <div className="p-6 bg-gray-50 rounded-3xl border border-clinical-line">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center text-blue-600 font-bold text-sm">
+                {user.name.charAt(0)}
+              </div>
+              <div className="overflow-hidden">
+                <p className="text-sm font-bold text-slate-900 truncate">{user.name}</p>
+                <p className="text-[10px] text-slate-500 truncate">{user.email}</p>
+              </div>
+            </div>
+            <button 
+              onClick={() => logout()}
+              className="w-full py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-50 hover:text-red-600 hover:border-red-100 transition-all shadow-sm"
+            >
+              Sign Out
+            </button>
+          </div>
+          
           <div className="p-6 bg-gray-50 rounded-3xl border border-clinical-line">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-2 h-2 bg-clinical-success rounded-full animate-pulse shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
@@ -551,7 +670,7 @@ export default function App() {
             <h2 className="text-5xl font-serif font-bold tracking-tighter mb-4">
               {activeTab === 'dashboard' && 'Clinical Overview'}
               {activeTab === 'intake' && 'Patient Assessment'}
-              {activeTab === 'history' && 'Triage Logs'}
+              {activeTab === 'history' && 'Triage History'}
             </h2>
             <div className="flex items-center gap-4">
               <p className="text-gray-400 text-xs font-bold uppercase tracking-widest">
@@ -747,9 +866,9 @@ export default function App() {
                 <section>
                   <h3 className="micro-label mb-8 flex items-center gap-2">
                     <User size={14} className="text-clinical-accent" />
-                    Patient Demographics
+                    Patient Demographics & Symptoms
                   </h3>
-                  <div className="grid grid-cols-2 gap-8">
+                  <div className="grid grid-cols-2 gap-8 mb-8">
                     <div className="space-y-3">
                       <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Age</label>
                       <input 
@@ -770,6 +889,27 @@ export default function App() {
                         <option value="other">Other</option>
                       </select>
                     </div>
+                  </div>
+                  <div className="space-y-3 mb-8">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Chief Complaint / Symptoms</label>
+                    <textarea 
+                      name="symptoms" 
+                      value={formData.symptoms} 
+                      onChange={handleInputChange}
+                      placeholder="e.g., Severe chest pain radiating to left arm, shortness of breath..."
+                      required
+                      className="w-full bg-gray-50 border border-clinical-line rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-clinical-accent outline-none transition-all h-24 resize-none"
+                    />
+                  </div>
+                  <div className="space-y-3">
+                    <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest ml-1">Relevant Medical History</label>
+                    <textarea 
+                      name="medical_history" 
+                      value={formData.medical_history} 
+                      onChange={handleInputChange}
+                      placeholder="e.g., Hypertension, Type 2 Diabetes, previous myocardial infarction in 2021..."
+                      className="w-full bg-gray-50 border border-clinical-line rounded-2xl px-5 py-4 text-sm focus:ring-2 focus:ring-clinical-accent outline-none transition-all h-24 resize-none"
+                    />
                   </div>
                 </section>
 
@@ -872,6 +1012,12 @@ export default function App() {
                         <p className="text-xs text-gray-600 leading-relaxed">
                           {prediction.explanation.summary}
                         </p>
+                        <div className="mt-4 p-4 bg-white rounded-xl border border-blue-100">
+                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-2">Clinical Summary</p>
+                          <p className="text-xs text-gray-700 leading-relaxed italic">
+                            "{prediction.explanation.clinical_summary}"
+                          </p>
+                        </div>
                         <div className="mt-4 pt-4 border-t border-gray-200">
                           <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">Top Drivers</p>
                           <div className="space-y-2">
@@ -888,15 +1034,25 @@ export default function App() {
                       </div>
 
                       {/* Alert Trigger */}
-                      {prediction.triage_level <= 2 && (
+                      <div className="flex gap-4">
                         <button 
-                          onClick={() => triggerAlert(history[0]?.id || 'NEW', prediction.triage_level)}
-                          className="w-full bg-red-50 text-red-600 py-4 rounded-2xl font-bold border-2 border-dashed border-red-200 hover:bg-red-100 transition-all flex items-center justify-center gap-3 group"
+                          onClick={() => downloadPDF({ ...formData, ...prediction, id: 'NEW', time: new Date().toLocaleTimeString() })}
+                          className="flex-1 bg-white border border-gray-200 text-gray-700 py-4 rounded-2xl font-bold hover:bg-gray-50 transition-all flex items-center justify-center gap-3"
                         >
-                          <Bell size={20} className="group-hover:animate-bounce" />
-                          ACTIVATE EMERGENCY ALERT
+                          <Download size={20} />
+                          DOWNLOAD REPORT
                         </button>
-                      )}
+                        
+                        {prediction.triage_level <= 2 && (
+                          <button 
+                            onClick={() => triggerAlert(history[0]?.id || 'NEW', prediction.triage_level)}
+                            className="flex-1 bg-red-50 text-red-600 py-4 rounded-2xl font-bold border-2 border-dashed border-red-200 hover:bg-red-100 transition-all flex items-center justify-center gap-3 group"
+                          >
+                            <Bell size={20} className="group-hover:animate-bounce" />
+                            ACTIVATE ALERT
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </motion.div>
                 ) : (
@@ -960,6 +1116,7 @@ export default function App() {
                       { label: 'ID', key: 'id' },
                       { label: 'Time', key: 'timestamp' },
                       { label: 'Demographics', key: 'age' },
+                      { label: 'Symptoms', key: 'symptoms' },
                       { label: 'Vitals (HR/BP/SpO2/RR/T)', key: 'vitals' },
                       { label: 'Triage Level', key: 'triage_level' },
                       { label: 'Confidence', key: 'confidence' },
@@ -1026,6 +1183,11 @@ export default function App() {
                         <td className="px-8 py-6">
                           <div className="text-xs font-bold">{item.age}Y</div>
                           <div className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter mt-0.5">{item.arrival_mode.replace('_', ' ')}</div>
+                        </td>
+                        <td className="px-8 py-6">
+                          <p className="text-[10px] text-gray-500 line-clamp-2 max-w-[150px] leading-relaxed">
+                            {item.symptoms}
+                          </p>
                         </td>
                         <td className="px-8 py-6 text-xs font-mono font-medium">
                           <div className="flex gap-2 items-center">
@@ -1154,6 +1316,20 @@ export default function App() {
                         </div>
                       </div>
                     </section>
+                    
+                    <section>
+                      <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-4">Chief Complaint & History</h4>
+                      <div className="space-y-4">
+                        <div className="bg-gray-50 p-4 rounded-2xl">
+                          <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Symptoms</p>
+                          <p className="text-xs text-gray-700 leading-relaxed">{selectedRecord.symptoms}</p>
+                        </div>
+                        <div className="bg-gray-50 p-4 rounded-2xl">
+                          <p className="text-[10px] text-gray-400 uppercase font-bold mb-1">Medical History</p>
+                          <p className="text-xs text-gray-700 leading-relaxed">{selectedRecord.medical_history || 'No history provided.'}</p>
+                        </div>
+                      </div>
+                    </section>
                   </div>
 
                   <div className="space-y-6">
@@ -1164,9 +1340,15 @@ export default function App() {
                           <TriageBadge level={selectedRecord.triage_level} />
                           <span className="text-[10px] font-bold text-blue-600">{Math.round(selectedRecord.confidence * 100)}% Confidence</span>
                         </div>
-                        <p className="text-xs text-blue-800 leading-relaxed italic">
+                        <p className="text-xs text-blue-800 leading-relaxed italic mb-4">
                           "{selectedRecord.explanation.summary}"
                         </p>
+                        <div className="bg-white p-3 rounded-xl border border-blue-100">
+                          <p className="text-[10px] font-bold text-blue-600 uppercase tracking-wider mb-1">Clinical Summary</p>
+                          <p className="text-xs text-gray-700 leading-relaxed italic">
+                            "{selectedRecord.explanation.clinical_summary}"
+                          </p>
+                        </div>
                       </div>
                       
                       <h4 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">Risk Factors</h4>
@@ -1185,10 +1367,17 @@ export default function App() {
                   </div>
                 </div>
 
-                <div className="p-8 bg-gray-50 border-t border-gray-100 flex justify-end">
+                <div className="p-8 bg-gray-50 border-t border-gray-100 flex justify-end gap-4">
+                  <button 
+                    onClick={() => downloadPDF(selectedRecord)}
+                    className="bg-white border border-gray-200 px-6 py-2 rounded-xl text-sm font-bold hover:bg-gray-100 transition-colors flex items-center gap-2"
+                  >
+                    <Download size={16} />
+                    Download PDF
+                  </button>
                   <button 
                     onClick={() => setSelectedRecord(null)}
-                    className="bg-white border border-gray-200 px-6 py-2 rounded-xl text-sm font-bold hover:bg-gray-100 transition-colors"
+                    className="bg-clinical-ink text-white px-6 py-2 rounded-xl text-sm font-bold hover:bg-opacity-90 transition-colors"
                   >
                     Close
                   </button>
@@ -1199,5 +1388,13 @@ export default function App() {
         </AnimatePresence>
       </main>
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
