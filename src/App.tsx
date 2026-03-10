@@ -231,6 +231,143 @@ const TriageTrends = ({ history }: { history: any[] }) => {
   );
 };
 
+// --- Mock Data ---
+
+const MOCK_HISTORY = [
+  {
+    id: "p1a2b3c4d",
+    time: "08:15 AM",
+    timestamp: Date.now() - 3600000 * 2,
+    age: 68,
+    heart_rate: 115,
+    systolic_blood_pressure: 175,
+    oxygen_saturation: 91,
+    respiratory_rate: 24,
+    body_temperature: 38.5,
+    pain_level: 7,
+    chronic_disease_count: 2,
+    previous_er_visits: 1,
+    arrival_mode: 'ambulance' as const,
+    triage_level: 2,
+    confidence: 0.92,
+    risk_factors: ["Mild Hypoxia", "Tachycardia", "Hypertension"],
+    explanation: {
+      top_features: ["oxygen_saturation", "heart_rate"],
+      summary: "Patient presents with respiratory distress and elevated heart rate."
+    }
+  },
+  {
+    id: "q5w6e7r8t",
+    time: "09:30 AM",
+    timestamp: Date.now() - 3600000 * 1.5,
+    age: 24,
+    heart_rate: 72,
+    systolic_blood_pressure: 118,
+    oxygen_saturation: 99,
+    respiratory_rate: 14,
+    body_temperature: 36.8,
+    pain_level: 2,
+    chronic_disease_count: 0,
+    previous_er_visits: 0,
+    arrival_mode: 'walk-in' as const,
+    triage_level: 5,
+    confidence: 0.98,
+    risk_factors: [],
+    explanation: {
+      top_features: ["vitals_stable"],
+      summary: "All vital signs are within normal limits."
+    }
+  },
+  {
+    id: "z9x8c7v6b",
+    time: "10:45 AM",
+    timestamp: Date.now() - 3600000 * 1,
+    age: 52,
+    heart_rate: 142,
+    systolic_blood_pressure: 85,
+    oxygen_saturation: 88,
+    respiratory_rate: 32,
+    body_temperature: 37.2,
+    pain_level: 9,
+    chronic_disease_count: 1,
+    previous_er_visits: 3,
+    arrival_mode: 'ambulance' as const,
+    triage_level: 1,
+    confidence: 0.95,
+    risk_factors: ["Critical Hypoxia", "Tachycardia", "Hypotension", "Tachypnea"],
+    explanation: {
+      top_features: ["oxygen_saturation", "respiratory_rate"],
+      summary: "Critical respiratory and hemodynamic instability detected."
+    }
+  },
+  {
+    id: "m1n2b3v4c",
+    time: "11:20 AM",
+    timestamp: Date.now() - 1800000,
+    age: 35,
+    heart_rate: 95,
+    systolic_blood_pressure: 135,
+    oxygen_saturation: 96,
+    respiratory_rate: 18,
+    body_temperature: 39.2,
+    pain_level: 5,
+    chronic_disease_count: 0,
+    previous_er_visits: 0,
+    arrival_mode: 'walk-in' as const,
+    triage_level: 3,
+    confidence: 0.89,
+    risk_factors: ["Fever"],
+    explanation: {
+      top_features: ["body_temperature"],
+      summary: "Patient has significant fever but stable respiratory status."
+    }
+  },
+  {
+    id: "k9l8j7h6g",
+    time: "12:05 PM",
+    timestamp: Date.now() - 900000,
+    age: 72,
+    heart_rate: 88,
+    systolic_blood_pressure: 160,
+    oxygen_saturation: 94,
+    respiratory_rate: 20,
+    body_temperature: 37.5,
+    pain_level: 4,
+    chronic_disease_count: 3,
+    previous_er_visits: 2,
+    arrival_mode: 'public_transport' as const,
+    triage_level: 3,
+    confidence: 0.91,
+    risk_factors: ["Hypertension", "Elderly"],
+    explanation: {
+      top_features: ["age", "systolic_blood_pressure"],
+      summary: "Stable vitals but high risk due to age and comorbidities."
+    }
+  },
+  {
+    id: "f5d4s3a2q",
+    time: "12:45 PM",
+    timestamp: Date.now() - 300000,
+    age: 19,
+    heart_rate: 105,
+    systolic_blood_pressure: 110,
+    oxygen_saturation: 98,
+    respiratory_rate: 22,
+    body_temperature: 37.1,
+    pain_level: 8,
+    chronic_disease_count: 0,
+    previous_er_visits: 0,
+    arrival_mode: 'walk-in' as const,
+    triage_level: 4,
+    confidence: 0.87,
+    risk_factors: ["Severe Pain"],
+    explanation: {
+      top_features: ["pain_level"],
+      summary: "Significant pain reported, but physiological vitals are stable."
+    }
+  }
+];
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'intake' | 'history'>('dashboard');
   const [formData, setFormData] = useState<PatientData>({
@@ -248,7 +385,7 @@ export default function App() {
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [activeAlerts, setActiveAlerts] = useState<{ id: string, patientId: string, level: number, time: string }[]>([]);
-  const [history, setHistory] = useState<(PatientData & PredictionResult & { id: string, time: string, timestamp: number })[]>([]);
+  const [history, setHistory] = useState<(PatientData & PredictionResult & { id: string, time: string, timestamp: number })[]>(MOCK_HISTORY);
   
   // History Filter/Sort State
   const [searchQuery, setSearchQuery] = useState('');
